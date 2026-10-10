@@ -1,69 +1,142 @@
-import { test, expect } from "../../src/fixtures/page.fixtures";
-import { ENV } from "../../config/env.config";
-import { PRODUCT_SLUGS } from "../../src/utils/products";
+import { buildCustomer, type CustomerInfo } from "@data/customers";
+import { PRODUCTS } from "@data/products";
+import { expect, test } from "@fixtures/test.fixtures";
+import { calculateOrderSummary, formatPrice } from "@utils/pricing";
 
-const ONESIE = "Sauce Labs Onesie";
-
-test.describe("E2E Checkout Flow", () => {
-  test.beforeEach(async ({ loginPage }) => {
-    await loginPage.open();
-    await loginPage.login(ENV.STANDARD_USERNAME, ENV.STANDARD_PASSWORD);
+test.describe("Checkout", () => {
+  test.beforeEach(async ({ inventoryPage }) => {
+    await inventoryPage.open();
   });
 
-  test("adds Sauce Labs Onesie to cart, checks out, and completes the order @smoke @e2e", async ({
-    page,
+  test(
+    "customer buys Sauce Labs Onesie and the order is completed",
+    { tag: ["@smoke", "@e2e"] },
+    async ({
+      page,
+      inventoryPage,
+      cartPage,
+      checkoutInformationPage,
+      checkoutOverviewPage,
+      checkoutCompletePage,
+    }) => {
+      const product = PRODUCTS.onesie;
+      const expected = calculateOrderSummary([product.price]);
+
+      await test.step("add the product to the cart", async () => {
+        await inventoryPage.addToCart(product);
+        await expect(inventoryPage.header.cartBadge).toHaveText("1");
+      });
+
+      await test.step("review the cart", async () => {
+        await inventoryPage.header.openCart();
+        await expect(page).toHaveURL(cartPage.path);
+        await expect(cartPage.itemNames).toHaveText([product.name]);
+        await expect(cartPage.itemPrices).toHaveText([formatPrice(product.price)]);
+      });
+
+      await test.step("enter customer information", async () => {
+        await cartPage.proceedToCheckout();
+        await expect(page).toHaveURL(checkoutInformationPage.path);
+        await checkoutInformationPage.submit(buildCustomer());
+      });
+
+      await test.step("verify the order overview and totals", async () => {
+        await expect(page).toHaveURL(checkoutOverviewPage.path);
+        await expect(checkoutOverviewPage.itemNames).toHaveText([product.name]);
+        await expect(checkoutOverviewPage.itemTotalLabel).toHaveText(
+          `Item total: ${formatPrice(expected.itemTotal)}`,
+        );
+        await expect(checkoutOverviewPage.taxLabel).toHaveText(`Tax: ${formatPrice(expected.tax)}`);
+        await expect(checkoutOverviewPage.totalLabel).toHaveText(
+          `Total: ${formatPrice(expected.total)}`,
+        );
+      });
+
+      await test.step("finish the order", async () => {
+        await checkoutOverviewPage.finishOrder();
+        await expect(page).toHaveURL(checkoutCompletePage.path);
+        await expect(checkoutCompletePage.completeHeader).toHaveText("Thank you for your order!");
+        await expect(checkoutCompletePage.completeText).toContainText(
+          "Your order has been dispatched",
+        );
+        await expect(checkoutCompletePage.header.cartBadge).toBeHidden();
+      });
+    },
+  );
+
+  test("order overview totals add up for multiple products", async ({
     inventoryPage,
     cartPage,
-    checkoutPage,
+    checkoutInformationPage,
+    checkoutOverviewPage,
   }) => {
-    // 1. Add item 'Sauce Labs Onesie' to cart
-    await inventoryPage.addProductToCart(PRODUCT_SLUGS[ONESIE]);
-    await expect(inventoryPage.cartBadge).toHaveText("1");
+    const products = [PRODUCTS.backpack, PRODUCTS.fleeceJacket, PRODUCTS.boltTShirt];
+    const expected = calculateOrderSummary(products.map((product) => product.price));
 
-    // 2. Go to cart
-    await inventoryPage.openCart();
-    await expect(page).toHaveURL(/.*cart\.html/);
-    await expect(cartPage.itemNames()).toHaveText([ONESIE]);
-
-    // 3. Proceed checkout
+    await inventoryPage.addToCart(...products);
+    await inventoryPage.header.openCart();
     await cartPage.proceedToCheckout();
-    await expect(page).toHaveURL(/.*checkout-step-one\.html/);
+    await checkoutInformationPage.submit(buildCustomer());
 
-    await checkoutPage.fillCustomerInfo({
-      firstName: "QA",
-      lastName: "Automation",
-      postalCode: "12345",
-    });
-    await checkoutPage.continueToOverview();
-
-    await expect(page).toHaveURL(/.*checkout-step-two\.html/);
-    await expect(checkoutPage.summaryItemNames).toHaveText([ONESIE]);
-    await expect(checkoutPage.summaryTotalLabel).toContainText("Total: $");
-
-    // 4. Ensure that the checkout process is completed
-    await checkoutPage.finishOrder();
-
-    await expect(page).toHaveURL(/.*checkout-complete\.html/);
-    await expect(checkoutPage.completeHeader).toHaveText("Thank you for your order!");
-    await expect(checkoutPage.completeText).toContainText(
-      "Your order has been dispatched"
+    await expect(checkoutOverviewPage.itemNames).toHaveText(
+      products.map((product) => product.name),
     );
-    await expect(checkoutPage.backToProductsButton).toBeVisible();
+    await expect(checkoutOverviewPage.itemTotalLabel).toHaveText(
+      `Item total: ${formatPrice(expected.itemTotal)}`,
+    );
+    await expect(checkoutOverviewPage.taxLabel).toHaveText(`Tax: ${formatPrice(expected.tax)}`);
+    await expect(checkoutOverviewPage.totalLabel).toHaveText(
+      `Total: ${formatPrice(expected.total)}`,
+    );
   });
 
-  test("cannot continue past step one without required customer information", async ({
-    inventoryPage,
-    cartPage,
-    checkoutPage,
-  }) => {
-    await inventoryPage.addProductToCart(PRODUCT_SLUGS[ONESIE]);
-    await inventoryPage.openCart();
-    await cartPage.proceedToCheckout();
+  test.describe("customer information validation", () => {
+    test.beforeEach(async ({ inventoryPage, cartPage }) => {
+      await inventoryPage.addToCart(PRODUCTS.onesie);
+      await inventoryPage.header.openCart();
+      await cartPage.proceedToCheckout();
+    });
 
-    // Leave all fields blank and try to continue
-    await checkoutPage.continueToOverview();
+    const missingFieldCases: { field: string; customer: CustomerInfo; error: string }[] = [
+      {
+        field: "first name",
+        customer: buildCustomer({ firstName: "" }),
+        error: "Error: First Name is required",
+      },
+      {
+        field: "last name",
+        customer: buildCustomer({ lastName: "" }),
+        error: "Error: Last Name is required",
+      },
+      {
+        field: "postal code",
+        customer: buildCustomer({ postalCode: "" }),
+        error: "Error: Postal Code is required",
+      },
+    ];
 
-    await expect(checkoutPage.stepOneErrorMessage).toBeVisible();
-    await expect(checkoutPage.stepOneErrorMessage).toContainText("First Name is required");
+    for (const { field, customer, error } of missingFieldCases) {
+      test(
+        `requires the ${field}`,
+        { tag: "@negative" },
+        async ({ page, checkoutInformationPage }) => {
+          await checkoutInformationPage.submit(customer);
+
+          await expect(checkoutInformationPage.errorMessage).toHaveText(error);
+          await expect(page).toHaveURL(checkoutInformationPage.path);
+        },
+      );
+    }
+
+    test("cancelling returns to the cart with its items kept", async ({
+      page,
+      cartPage,
+      checkoutInformationPage,
+    }) => {
+      await checkoutInformationPage.cancel();
+
+      await expect(page).toHaveURL(cartPage.path);
+      await expect(cartPage.itemNames).toHaveText([PRODUCTS.onesie.name]);
+    });
   });
 });

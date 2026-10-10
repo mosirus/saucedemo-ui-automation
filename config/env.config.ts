@@ -1,12 +1,24 @@
+import path from "node:path";
 import dotenv from "dotenv";
-import path from "path";
 
-dotenv.config({ path: path.resolve(__dirname, "../.env") });
+const PROJECT_ROOT = path.resolve(__dirname, "..");
+
+dotenv.config({ path: path.join(PROJECT_ROOT, ".env") });
+
+function readEnv(name: string, fallback: string): string {
+  const value = process.env[name]?.trim();
+  return value ? value : fallback;
+}
 
 export const ENV = {
-  BASE_URL: process.env.BASE_URL || "https://www.saucedemo.com",
-  STANDARD_USERNAME: process.env.STANDARD_USERNAME || "standard_user",
-  STANDARD_PASSWORD: process.env.STANDARD_PASSWORD || "secret_sauce",
-  LOCKED_OUT_USERNAME: process.env.LOCKED_OUT_USERNAME || "locked_out_user",
-  HEADLESS: process.env.HEADLESS !== "false",
-};
+  baseUrl: readEnv("BASE_URL", "https://www.saucedemo.com"),
+  /** saucedemo.com uses one shared password for every demo user. */
+  password: readEnv("SAUCE_PASSWORD", "secret_sauce"),
+  headless: readEnv("HEADLESS", "true") !== "false",
+  isCI: !!process.env.CI,
+} as const;
+
+export const PATHS = {
+  /** Browser storage state of the logged-in standard user, written by the auth setup project. */
+  standardUserAuthState: path.join(PROJECT_ROOT, ".auth", "standard-user.json"),
+} as const;

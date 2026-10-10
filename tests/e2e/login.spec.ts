@@ -1,38 +1,89 @@
-import { test, expect } from "../../src/fixtures/page.fixtures";
-import { ENV } from "../../config/env.config";
+import { ENV } from "@config/env.config";
+import { USERS, type UserCredentials } from "@data/users";
+import { expect, test } from "@fixtures/test.fixtures";
 
 test.describe("Login", () => {
+  // These tests exercise the login form itself, so they must start logged out.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
   test.beforeEach(async ({ loginPage }) => {
     await loginPage.open();
   });
 
-  test("standard user can log in with valid credentials @smoke", async ({ loginPage, page }) => {
-    await loginPage.login(ENV.STANDARD_USERNAME, ENV.STANDARD_PASSWORD);
+  test(
+    "standard user is redirected to the inventory after logging in",
+    { tag: "@smoke" },
+    async ({ page, loginPage, inventoryPage }) => {
+      await loginPage.login(USERS.standard);
 
-    await expect(page).toHaveURL(/.*inventory\.html/);
-    await expect(page.locator(".title")).toHaveText("Products");
-  });
+      await expect(page).toHaveURL(inventoryPage.path);
+      await expect(inventoryPage.title).toHaveText("Products");
+    },
+  );
 
-  test("shows an error for a locked out user", async ({ loginPage }) => {
-    await loginPage.login(ENV.LOCKED_OUT_USERNAME, "secret_sauce");
+  const rejectedLogins: { scenario: string; credentials: UserCredentials; error: string }[] = [
+    {
+      scenario: "the username is empty",
+      credentials: { username: "", password: ENV.password },
+      error: "Epic sadface: Username is required",
+    },
+    {
+      scenario: "the password is empty",
+      credentials: { username: USERS.standard.username, password: "" },
+      error: "Epic sadface: Password is required",
+    },
+    {
+      scenario: "the password is wrong",
+      credentials: { username: USERS.standard.username, password: "wrong_password" },
+      error: "Epic sadface: Username and password do not match any user in this service",
+    },
+    {
+      scenario: "the user is locked out",
+      credentials: USERS.lockedOut,
+      error: "Epic sadface: Sorry, this user has been locked out.",
+    },
+  ];
 
-    await expect(loginPage.errorMessage).toBeVisible();
-    await expect(loginPage.errorMessage).toContainText("Sorry, this user has been locked out");
-  });
+  for (const { scenario, credentials, error } of rejectedLogins) {
+    test(
+      `rejects the login when ${scenario}`,
+      { tag: "@negative" },
+      async ({ page, loginPage }) => {
+        await loginPage.login(credentials);
 
-  test("shows an error when credentials are empty", async ({ loginPage }) => {
-    await loginPage.loginButton.click();
-
-    await expect(loginPage.errorMessage).toBeVisible();
-    await expect(loginPage.errorMessage).toContainText("Username is required");
-  });
-
-  test("shows an error for an invalid password", async ({ loginPage }) => {
-    await loginPage.login(ENV.STANDARD_USERNAME, "wrong_password");
-
-    await expect(loginPage.errorMessage).toBeVisible();
-    await expect(loginPage.errorMessage).toContainText(
-      "Username and password do not match any user in this service"
+        await expect(loginPage.errorMessage).toHaveText(error);
+        await expect(page).toHaveURL(loginPage.path);
+      },
     );
+  }
+
+  test(
+    "redirects to the login page when opening the inventory without a session",
+    { tag: "@negative" },
+    async ({ page, loginPage, inventoryPage }) => {
+      await inventoryPage.open();
+
+      await expect(page).toHaveURL(loginPage.path);
+      await expect(loginPage.errorMessage).toHaveText(
+        "Epic sadface: You can only access '/inventory.html' when you are logged in.",
+      );
+    },
+  );
+});
+
+test.describe("Logout", () => {
+  test("logged-in user can log out and loses access to the inventory", async ({
+    page,
+    loginPage,
+    inventoryPage,
+  }) => {
+    await inventoryPage.open();
+    await inventoryPage.header.logout();
+
+    await expect(page).toHaveURL(loginPage.path);
+    await expect(loginPage.loginButton).toBeVisible();
+
+    await inventoryPage.open();
+    await expect(page).toHaveURL(loginPage.path);
   });
 });

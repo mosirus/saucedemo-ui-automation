@@ -1,90 +1,73 @@
 # Saucedemo UI Automation
 
-UI automation suite for [saucedemo.com](https://www.saucedemo.com), built with [Playwright Test](https://playwright.dev/) + TypeScript using the **Page Object Model (POM)** pattern.
+UI automation suite for [saucedemo.com](https://www.saucedemo.com), built with [Playwright Test](https://playwright.dev/) + TypeScript using the **Page Object Model (POM)**.
 
-Covers the scenarios from the QA Take Home Test, Task 3:
+## Coverage
 
-- **Login** — valid credentials, locked-out user, empty credentials, invalid credentials
-- **E2E Checkout Flow** — add "Sauce Labs Onesie" to cart → go to cart → proceed to checkout → fill customer info → ensure the order completes successfully (plus a validation guard on step one)
+| Area         | Scenarios                                                                                                                                                                     |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Login**    | valid login · empty username · empty password · wrong password · locked-out user · direct URL access without a session · logout                                               |
+| **Cart**     | badge count on add/remove · cart lists names and prices · remove from the cart page                                                                                           |
+| **Checkout** | full E2E purchase of _Sauce Labs Onesie_ (with item total / tax / total verified) · multi-item totals · required first name / last name / postal code · cancel keeps the cart |
+
+Tags: `@smoke` (critical path, runs on Chromium, Firefox and WebKit), `@e2e`, `@negative`.
 
 ## Project structure
 
 ```
-saucedemo-ui-automation/
-├── .github/workflows/e2e-tests.yml     # CI pipeline (GitHub Actions)
+├── .github/workflows/e2e-tests.yml   # CI: static checks → E2E, nightly schedule
 ├── config/
-│   ├── env.config.ts                   # environment variables (dotenv)
-│   └── playwright.config.ts            # Playwright Test configuration
+│   ├── env.config.ts                 # typed env vars (.env) + shared paths
+│   └── playwright.config.ts          # projects, reporters, auth setup dependency
 ├── src/
-│   ├── page-objects/
-│   │   ├── base.page.ts                # shared navigation helpers
-│   │   ├── login.page.ts
-│   │   ├── inventory.page.ts
-│   │   ├── cart.page.ts
-│   │   └── checkout.page.ts
-│   ├── fixtures/page.fixtures.ts       # injects page objects via Playwright fixtures
-│   └── utils/products.ts               # product-name -> data-test slug map
-├── tests/e2e/
-│   ├── login.spec.ts
-│   └── checkout.spec.ts
-├── .env.example
-├── package.json
-├── tsconfig.json
-└── REPORT.md                           # test execution report
+│   ├── components/                   # UI fragments shared across pages (header)
+│   ├── pages/                        # one page object per screen
+│   ├── fixtures/test.fixtures.ts     # injects page objects into tests
+│   ├── data/                         # users, products (with prices), customer builder
+│   └── utils/pricing.ts              # independent oracle for order totals
+└── tests/
+    ├── setup/auth.setup.ts           # logs in once, saves storage state
+    └── e2e/                          # login, cart, checkout specs
 ```
-
-## Prerequisites
-
-- Node.js 18+
-- npm
 
 ## Setup
 
-```bash
-npm install
-npx playwright install --with-deps chromium
-cp .env.example .env   # optional, defaults already target the public demo site
-```
-
-## Running the tests
+Requires Node.js 22+ (see `.nvmrc`).
 
 ```bash
-# Run the full suite headlessly
-npm test
-
-# Interactive UI runner
-npm run test:ui
-
-# Headed (watch the browser)
-npm run test:headed
-
-# Step-through debug mode
-npm run test:debug
-
-# Open the last HTML report
-npm run report
+npm ci
+npx playwright install --with-deps
+cp .env.example .env   # optional, defaults target the public demo site
 ```
 
-Run a single file or test by name:
+## Running
 
-```bash
-npx playwright test --config=config/playwright.config.ts tests/e2e/checkout.spec.ts
-npx playwright test --config=config/playwright.config.ts -g "completes the order"
-```
+| Command                 | What it does                                 |
+| ----------------------- | -------------------------------------------- |
+| `npm test`              | full suite (all projects)                    |
+| `npm run test:chromium` | full suite on Chromium only                  |
+| `npm run test:smoke`    | `@smoke` tests only                          |
+| `npm run test:headed`   | Chromium, with a visible browser             |
+| `npm run test:ui`       | Playwright UI mode                           |
+| `npm run test:debug`    | step-through debugging                       |
+| `npm run report`        | open the last HTML report                    |
+| `npm run check`         | typecheck + lint + format check (same as CI) |
 
-## Configuration
+## Design decisions
 
-`config/env.config.ts` loads `.env` (see `.env.example`) and defaults to the public `https://www.saucedemo.com` site with the `standard_user` / `secret_sauce` test credentials, so the suite runs out of the box with no setup.
-
-## Design notes
-
-- **Page Object Model**: every page the flow touches (`LoginPage`, `InventoryPage`, `CartPage`, `CheckoutPage`) exposes locators and intent-revealing methods (`login()`, `addProductToCart()`, `proceedToCheckout()`, `finishOrder()`); test files never touch a raw selector directly, so a markup change only requires updating one page object.
-- **Locators**: all selectors use the app's stable `data-test` / `id` attributes (confirmed against the live site), never brittle CSS class chains or text matching, in line with Playwright's recommended practice.
-- **Fixtures** (`src/fixtures/page.fixtures.ts`) inject every page object via Playwright's built-in fixture system — no `new LoginPage(page)` boilerplate scattered through specs.
-- **Assertions live in the specs**, never inside page objects, keeping page objects reusable across both positive and negative test cases.
-- **Auto-waiting**: relies entirely on Playwright's built-in auto-waiting and web-first assertions (`expect(locator).toHaveText(...)`), no hardcoded `waitForTimeout`.
-- **E2E flow test** walks the exact scenario from the brief: add Sauce Labs Onesie → cart → checkout → complete, with a web-first assertion at every step rather than only at the end, so a failure points straight at the step that broke.
+- **Page Object Model with composition.** Every screen has its own page object; pages behind the login extend `AuthenticatedPage`, which composes the shared `HeaderComponent` (cart and logout) instead of duplicating it. Each page declares its `path`, so specs assert navigation with `expect(page).toHaveURL(cartPage.path)` instead of hand-written regexes.
+- **Stable locators only.** All locators use `getByTestId` against the app's `data-test` attributes (`testIdAttribute: "data-test"`), or `getByRole`. There are no CSS class selectors, and specs never build raw locators (enforced by `playwright/no-raw-locators`).
+- **Assertions live in specs.** Page objects expose locators and user intents (`login()`, `addToCart()`, `submit()`, `finishOrder()`), so the same page object serves positive and negative tests. The one exception is synchronisation: `CheckoutInformationPage.submit()` re-fills the form until every field holds its value, because the app occasionally drops a value typed right after the form mounts on WebKit.
+- **Log in once, reuse the session.** The `setup` project logs in and saves `storageState`. Every other test starts already authenticated, so only the login specs exercise the login form (they explicitly opt out of the stored session). The saucedemo session cookie lives for 10 minutes. The full run takes about 1 minute, but if the suite grows past that, switch to a per-worker login fixture.
+- **Independent test oracle.** Order totals are not just checked for a `$` sign. `calculateOrderSummary()` computes the expected item total, 8% tax and total from the product catalogue, and the overview must match exactly.
+- **Data-driven negative tests.** Validation cases are tables of `{ scenario, input, expectedError }` that generate one named test each, so adding a case is a one-line change.
+- **Readable reports.** The E2E flow is split into `test.step`s, so the HTML report and traces show exactly which step broke.
+- **No hard waits.** The suite relies only on auto-waiting and web-first assertions.
+- **Quality gates.** TypeScript `strict`, type-aware ESLint (`no-floating-promises` catches missing `await`s), `eslint-plugin-playwright` and Prettier run in CI before any browser starts.
 
 ## CI/CD
 
-`.github/workflows/e2e-tests.yml` runs the full suite (headless Chromium) on every push/PR to `main` and uploads the Playwright HTML report as a build artifact.
+`.github/workflows/e2e-tests.yml` runs on push/PR to `main`/`master`, nightly, and on demand:
+
+1. **static-checks:** typecheck, lint, format check.
+2. **e2e-tests:** installs browsers and runs the suite. It reports through the `github` reporter (inline PR annotations) and JUnit, and uploads the HTML report on every run plus traces/screenshots/videos on failure.

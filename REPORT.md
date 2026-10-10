@@ -1,52 +1,59 @@
-# Task 3 — UI Automation Test Report
+# UI Automation Test Report
 
 **Target:** [https://www.saucedemo.com](https://www.saucedemo.com)
-**Framework:** Playwright Test, TypeScript, Page Object Model
-**Scenarios covered:** Login, E2E Checkout Flow (add "Sauce Labs Onesie" → cart → checkout → order completion)
+**Framework:** Playwright Test 1.64, TypeScript, Page Object Model
+**Execution date:** 2026-10-10 · Windows 11 · Node.js 22 · local run against the live site
 
-## Suite overview
+## Results
 
-| Spec file | Tests |
-|---|---|
-| `tests/e2e/login.spec.ts` | 4 |
-| `tests/e2e/checkout.spec.ts` | 2 |
-| **Total** | **6** |
+| Run                                               | Command                              | Result                       |
+| ------------------------------------------------- | ------------------------------------ | ---------------------------- |
+| Full suite, Chromium                              | `npm run test:chromium`              | **17 / 17 passed** (20.1 s)  |
+| Flakiness check, Chromium, every test repeated 5× | `--project=chromium --repeat-each=5` | **81 / 81 passed**, 0 flaky  |
+| `@smoke` on Chromium + Firefox + WebKit           | `npm run test:smoke`                 | **7 / 7 passed** (18.8 s)    |
+| E2E checkout on WebKit, repeated 20×              | `--project=webkit --repeat-each=20`  | **21 / 21 passed**, 0 flaky  |
+| Full suite, all browsers, repeated 3×             | `npm test -- --repeat-each=3`        | **61 / 61 passed** (1.0 min) |
+| Static checks                                     | `npm run check`                      | typecheck, lint, format pass |
 
-`npx playwright test --config=config/playwright.config.ts --list` confirms all 6 tests are discovered and wired correctly:
+The 17 results are 16 tests plus the one-off `setup` login that produces the shared session.
 
-```
-[Chromium] › e2e/checkout.spec.ts:13:7 › E2E Checkout Flow › adds Sauce Labs Onesie to cart, checks out, and completes the order @smoke @e2e
-[Chromium] › e2e/checkout.spec.ts:54:7 › E2E Checkout Flow › cannot continue past step one without required customer information
-[Chromium] › e2e/login.spec.ts:9:7  › Login › standard user can log in with valid credentials @smoke
-[Chromium] › e2e/login.spec.ts:16:7 › Login › shows an error for a locked out user
-[Chromium] › e2e/login.spec.ts:23:7 › Login › shows an error when credentials are empty
-[Chromium] › e2e/login.spec.ts:30:7 › Login › shows an error for an invalid password
-Total: 6 tests in 1 files
-```
-*(Playwright's listing output shown above; actual run spans 2 spec files as listed in the table.)*
+## Test inventory
 
-## Validation performed
+| #   | Spec               | Test                                                                     | Tags            |
+| --- | ------------------ | ------------------------------------------------------------------------ | --------------- |
+| 1   | `login.spec.ts`    | standard user is redirected to the inventory after logging in            | `@smoke`        |
+| 2   | `login.spec.ts`    | rejects the login when the username is empty                             | `@negative`     |
+| 3   | `login.spec.ts`    | rejects the login when the password is empty                             | `@negative`     |
+| 4   | `login.spec.ts`    | rejects the login when the password is wrong                             | `@negative`     |
+| 5   | `login.spec.ts`    | rejects the login when the user is locked out                            | `@negative`     |
+| 6   | `login.spec.ts`    | redirects to the login page when opening the inventory without a session | `@negative`     |
+| 7   | `login.spec.ts`    | logged-in user can log out and loses access to the inventory             |                 |
+| 8   | `cart.spec.ts`     | cart badge tracks products added and removed on the inventory            |                 |
+| 9   | `cart.spec.ts`     | cart lists every added product with its price                            |                 |
+| 10  | `cart.spec.ts`     | removing a product from the cart page updates the list and badge         |                 |
+| 11  | `checkout.spec.ts` | customer buys Sauce Labs Onesie and the order is completed               | `@smoke` `@e2e` |
+| 12  | `checkout.spec.ts` | order overview totals add up for multiple products                       |                 |
+| 13  | `checkout.spec.ts` | requires the first name                                                  | `@negative`     |
+| 14  | `checkout.spec.ts` | requires the last name                                                   | `@negative`     |
+| 15  | `checkout.spec.ts` | requires the postal code                                                 | `@negative`     |
+| 16  | `checkout.spec.ts` | cancelling returns to the cart with its items kept                       |                 |
 
-- `npx tsc --noEmit` — the suite compiles cleanly with TypeScript `strict` mode on.
-- `playwright test --list` — all 6 specs are correctly discovered.
-- Every locator (`#user-name`, `#password`, `#login-button`, `[data-test="error"]`, `[data-test="add-to-cart-sauce-labs-onesie"]`, `.shopping_cart_link`, `[data-test="checkout"]`, `[data-test="firstName"]` / `lastName` / `postalCode`, `[data-test="continue"]`, `[data-test="finish"]`, `[data-test="complete-header"]`, `[data-test="complete-text"]`) and every asserted text string (e.g. `"Epic sadface: Sorry, this user has been locked out."`, `"Error: First Name is required"`, `"Thank you for your order!"`, `"Your order has been dispatched, and will arrive just as fast as the pony can get there!"`) was confirmed against the **live site** during development of this suite, step by step through the exact login → add-to-cart → cart → checkout → finish flow, before being encoded as assertions.
+## Primary scenario: E2E checkout (#11)
 
-> **Note on running this suite in this delivery environment:** the sandbox used to assemble this submission restricts outbound network access to a fixed allowlist of package registries, so `npm test` could not be executed end-to-end from here against `saucedemo.com`. The suite is fully self-contained and will run normally with `npm test` on any machine with standard internet access, or in the included GitHub Actions workflow (`.github/workflows/e2e-tests.yml`), which installs Chromium, runs the suite, and uploads the HTML report (with screenshots/video/trace on failure) as a build artifact on every push/PR.
+Each step is a `test.step`, so the HTML report shows which one fails:
 
-## Expected results when run
+1. **Add the product to the cart:** badge shows `1`.
+2. **Review the cart:** URL `/cart.html`, the only item is _Sauce Labs Onesie_ at `$7.99`.
+3. **Enter customer information:** proceeds from `/checkout-step-one.html`.
+4. **Verify the order overview and totals:** `Item total: $7.99`, `Tax: $0.64`, `Total: $8.63`. The expected values come from an independent calculation (`src/utils/pricing.ts`), not from the page.
+5. **Finish the order:** URL `/checkout-complete.html`, "Thank you for your order!", and the cart badge is cleared.
 
-All 6 tests are expected to **PASS**, since every assertion was validated step-by-step against the live application before being written into the suite:
+## Defect found during stabilisation
 
-| # | Test | Scenario |
-|---|---|---|
-| 1 | standard user can log in with valid credentials | Positive login |
-| 2 | shows an error for a locked out user | Negative login |
-| 3 | shows an error when credentials are empty | Negative login (validation) |
-| 4 | shows an error for an invalid password | Negative login |
-| 5 | adds Sauce Labs Onesie to cart, checks out, and completes the order | **E2E checkout flow** — the primary scenario requested in the brief |
-| 6 | cannot continue past step one without required customer information | Negative checkout (validation) |
+On WebKit, the checkout information form sometimes drops the value typed into **First Name** right after the form mounts. A standalone probe reproduced it in 2 of 20 runs, while Last Name and Postal Code kept their values. For a real product this would be a bug report. In the suite, `CheckoutInformationPage.submit()` re-fills the form until every field holds its value, so the tests stay deterministic instead of relying on retries.
 
-## Coverage notes
+## Known gaps / next steps
 
-- The E2E test (#5) walks every step called out in the brief — add to cart, go to cart, proceed to checkout, and asserts the order actually completes (`checkout-complete.html`, "Thank you for your order!") rather than stopping at the last click, so a regression anywhere in the funnel is caught.
-- `trace: 'on-first-retry'`, `screenshot: 'only-on-failure'`, and `video: 'retain-on-failure'` are enabled in `config/playwright.config.ts`, so any future failure in CI comes with a trace, screenshot, and video automatically attached to the HTML report.
+- Persona users (`problem_user`, `error_user`, `performance_glitch_user`, `visual_user`) have known defects on the demo site. They are worth covering with `test.fail()` annotations or visual comparisons.
+- Product sorting (name / price) is not yet covered.
+- Accessibility checks (e.g. `@axe-core/playwright`) are not yet included.
